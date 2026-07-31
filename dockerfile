@@ -38,4 +38,4 @@ EXPOSE 3000
 # Expose API port
 EXPOSE 5029
 # Start Craig
-CMD ["sh", "-c", "/app/install.sh && sleep infinity"]
+CMD ["bash", "/app/entrypoint.sh"]
