@@ -51,23 +51,41 @@ def main():
                     continue
                 if time.time() - ts < 90:
                     continue
-                # 完成：cook 成 mp3
+                # 完成：cook 成每人一軌的 zip（container=zip，軌名含使用者名）
                 print("cooking", rid, flush=True)
-                mp3 = os.path.join("/tmp", rid + ".mp3")
-                with open(mp3, "wb") as out:
-                    subprocess.run(["/app/cook.sh", rid, "mp3", "mix"],
+                zpath = os.path.join("/tmp", rid + ".zip")
+                with open(zpath, "wb") as out:
+                    subprocess.run(["/app/cook.sh", rid, "mp3", "zip"],
                                    stdout=out, timeout=3600, check=True)
-                if os.path.getsize(mp3) < 10000:
+                import zipfile
+                xdir = os.path.join("/tmp", rid + "-x")
+                os.makedirs(xdir, exist_ok=True)
+                with zipfile.ZipFile(zpath) as z:
+                    z.extractall(xdir)
+                tracks = sorted(
+                    os.path.join(r, fn)
+                    for r, _, fns in os.walk(xdir) for fn in fns
+                    if fn.endswith(".mp3") and os.path.getsize(os.path.join(r, fn)) > 10000)
+                if not tracks:
                     print("empty cook, skip", rid, flush=True)
                     mark(rid)
-                    continue
-                if WEBHOOK:
-                    mb = os.path.getsize(mp3) / 1e6
-                    upload(mp3, f"🎙 **會議側錄完成**（id {rid}，{mb:.1f}MB）\n"
-                                f"待處理：轉逐字稿→抽決策/行動項→建卡。")
-                    print("uploaded", rid, flush=True)
-                mark(rid)
-                os.remove(mp3)
+                else:
+                    if WEBHOOK:
+                        names = "、".join(
+                            os.path.basename(t).rsplit(".", 1)[0].split("-", 1)[-1]
+                            for t in tracks)
+                        for i, t in enumerate(tracks):
+                            mb = os.path.getsize(t) / 1e6
+                            note = (f"🎙 **會議側錄完成**（id {rid}，{len(tracks)} 軌：{names}）\n"
+                                    f"每檔一位講者，檔名即講者。待處理：轉逐字稿（標講者）→抽決策/行動項→建卡。"
+                                    if i == 0 else
+                                    f"（{rid} 第 {i+1}/{len(tracks)} 軌，{mb:.1f}MB）")
+                            upload(t, note)
+                        print("uploaded", rid, len(tracks), "tracks", flush=True)
+                    mark(rid)
+                import shutil
+                shutil.rmtree(xdir, ignore_errors=True)
+                os.remove(zpath)
         except Exception as e:
             print("relay err", e, flush=True)
         time.sleep(30)
