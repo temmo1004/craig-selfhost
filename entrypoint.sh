@@ -37,6 +37,13 @@ POSTGRESQL_START_TIMEOUT_S=30
 REDIS_START_TIMEOUT_S=30
 DATABASE_URL=\"postgresql://craig:craig@localhost:5432/craig?schema=public\"
 CFG
+/etc/init.d/postgresql start || true
+service redis-server start || redis-server --daemonize yes || true
+for i in $(seq 1 30); do pg_isready -q && break; sleep 1; done
+su postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='craig'\"" | grep -q 1 || \
+  su postgres -c "psql -c \"CREATE USER craig WITH PASSWORD 'craig' CREATEDB;\""
+su postgres -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='craig'\"" | grep -q 1 || \
+  su postgres -c "createdb -O craig craig"
 /app/install.sh
 python3 /app/relay.py &
 sleep infinity
