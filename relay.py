@@ -31,7 +31,8 @@ def upload(path, note):
             ).encode() + blob + f"\r\n--{bnd}--\r\n".encode()
     urllib.request.urlopen(urllib.request.Request(
         WEBHOOK, body,
-        {"Content-Type": f"multipart/form-data; boundary={bnd}"}), timeout=300)
+        {"Content-Type": f"multipart/form-data; boundary={bnd}",
+         "User-Agent": "DiscordBot (sifang-relay,1)"}), timeout=300)
 
 
 def main():
