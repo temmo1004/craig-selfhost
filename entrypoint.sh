@@ -37,6 +37,14 @@ POSTGRESQL_START_TIMEOUT_S=30
 REDIS_START_TIMEOUT_S=30
 DATABASE_URL=\"postgresql://craig:craig@localhost:5432/craig?schema=public\"
 CFG
+# /var/lib/postgresql 掛了持久卷：第一次是空的，要在卷上重建 cluster
+mkdir -p /var/lib/postgresql
+chown -R postgres:postgres /var/lib/postgresql
+PGVER=$(ls /etc/postgresql 2>/dev/null | head -1)
+if [ -n "$PGVER" ] && [ ! -f "/var/lib/postgresql/$PGVER/main/PG_VERSION" ]; then
+  pg_dropcluster --stop "$PGVER" main 2>/dev/null || true
+  pg_createcluster "$PGVER" main
+fi
 /etc/init.d/postgresql start || true
 service redis-server start || redis-server --daemonize yes || true
 for i in $(seq 1 30); do pg_isready -q && break; sleep 1; done
