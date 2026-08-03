@@ -36,6 +36,17 @@ def upload(path, note):
 
 
 def main():
+    # 強制重做：env CRAIG_REDO=rid1,rid2 → 開機時把它們從 .relayed 移除，重新處理
+    redo = [r.strip() for r in os.environ.get("CRAIG_REDO", "").split(",") if r.strip()]
+    if redo:
+        done = done_set()
+        keep = done - set(redo)
+        try:
+            with open(DONE_F, "w") as f:
+                f.write("\n".join(sorted(keep)) + ("\n" if keep else ""))
+            print("CRAIG_REDO 解除標記，將重跑:", redo, flush=True)
+        except Exception as e:
+            print("redo unmark fail", e, flush=True)
     sizes = {}
     fails = {}
     while True:
