@@ -233,21 +233,23 @@ def main():
                         upload(f, note)
                     print("uploaded", rid, len(uploads), "檔", flush=True)
                 mark(rid)
-                # 閉環：把全長分軌複製到穩定目錄，開背景執行緒轉逐字稿（慢，不擋主迴圈）
-                try:
-                    txdir = os.path.join("/tmp", rid + "-tx")
-                    os.makedirs(txdir, exist_ok=True)
-                    fulls = []
-                    for ut in usertracks:
-                        dst = os.path.join(txdir, os.path.basename(ut))
-                        shutil.copy(ut, dst)
-                        fulls.append(dst)
-                    import threading
-                    threading.Thread(target=transcribe_meeting, args=(rid, fulls, txdir),
-                                     daemon=True).start()
-                    print("轉稿執行緒已開", rid, len(fulls), "軌", flush=True)
-                except Exception as e:
-                    print("轉稿啟動失敗", str(e)[:80], flush=True)
+                # 轉稿改由 basidemac 常駐 worker 做（住宅 IP 過 Cloudflare）；
+                # 雲端機房 IP 被 Cloudflare 擋，預設不在此轉稿。要開才設 CRAIG_CLOUD_TX=1
+                if os.environ.get("CRAIG_CLOUD_TX") == "1":
+                    try:
+                        txdir = os.path.join("/tmp", rid + "-tx")
+                        os.makedirs(txdir, exist_ok=True)
+                        fulls = []
+                        for ut in usertracks:
+                            dst = os.path.join(txdir, os.path.basename(ut))
+                            shutil.copy(ut, dst)
+                            fulls.append(dst)
+                        import threading
+                        threading.Thread(target=transcribe_meeting, args=(rid, fulls, txdir),
+                                         daemon=True).start()
+                        print("轉稿執行緒已開", rid, len(fulls), "軌", flush=True)
+                    except Exception as e:
+                        print("轉稿啟動失敗", str(e)[:80], flush=True)
                 shutil.rmtree(xdir, ignore_errors=True)
                 for f in [zpath, os.path.join("/tmp", rid + ".mix.mp3")]:
                     try:

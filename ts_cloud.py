@@ -5,6 +5,7 @@
 import json, os, re, subprocess, tempfile, time
 
 from curl_cffi import requests
+import lev
 
 BASE = "https://turboscribe.ai"
 DASH = f"{BASE}/zh-TW/dashboard"
@@ -22,68 +23,6 @@ def cookies():
 
 def sess():
     return requests.Session(impersonate="chrome", cookies=cookies())
-
-
-# ---- levscript /_levscript/json 編碼（要簽章上傳網址用）----
-class _Enc:
-    def __init__(self):
-        self.tbl, self.idx = [], {}
-
-    def s(self, x):
-        if x not in self.idx:
-            self.idx[x] = len(self.tbl)
-            self.tbl.append(x)
-        return self.idx[x]
-
-    def v(self, x):
-        if isinstance(x, str):
-            return [9, self.s(x)]
-        if isinstance(x, bool) or x is None or isinstance(x, (int, float)):
-            return x
-        if isinstance(x, list):
-            return [1] + [self.v(i) for i in x]
-        if isinstance(x, dict):
-            out = [7]
-            for k, val in x.items():
-                out += [self.s(k), self.v(val)]
-            return out
-        raise TypeError(type(x))
-
-
-def _lev_encode(obj):
-    e = _Enc()
-    return json.dumps([e.v(obj), e.tbl], ensure_ascii=False, separators=(",", ":"))
-
-
-def _lev_decode(raw):
-    data = json.loads(raw) if isinstance(raw, str) else raw
-    expr, tbl = data[0], data[1]
-
-    def d(x):
-        if isinstance(x, list) and x:
-            h = x[0]
-            if h == 9:
-                return tbl[x[1]]
-            if h == 1:
-                return [d(i) for i in x[1:]]
-            if h == 7:
-                out, rest = {}, x[1:]
-                for i in range(0, len(rest) - 1, 2):
-                    out[tbl[rest[i][1]] if isinstance(rest[i], list) else rest[i]] = d(rest[i + 1])
-                return out
-        return x
-    return d(expr)
-
-
-def _lev_call(s, invocations, build_id):
-    body = _lev_encode({"invocations": invocations, "build-id": build_id,
-                        "process-id": "p", "revision-id": None})
-    r = s.post(f"{BASE}/_levscript/json", data=body.encode(),
-               headers={"Content-Type": "text/plain", "Referer": DASH}, timeout=120)
-    try:
-        return r.status_code, _lev_decode(r.text)
-    except Exception:
-        return r.status_code, {"raw": r.text[:200]}
 
 
 _BID = {"v": ""}
@@ -111,16 +50,20 @@ def probe(s):
 
 
 def prep_media(path):
-    """轉 48k 單聲道 mp3 縮小上傳；已是小 mp3 就原樣。"""
+    """轉 48k 單聲道 mp3 縮小上傳；已是小 mp3 就原樣。
+    沒 ffmpeg（如 basidemac）或轉檔失敗 → 原檔直傳（TurboScribe 不受 Discord 8MB 限制）。"""
     ext = os.path.splitext(path)[1].lower()
     if ext == ".mp3" and os.path.getsize(path) < 8 * 1024 * 1024:
         return path, False
     out = os.path.join(tempfile.gettempdir(),
                        os.path.splitext(os.path.basename(path))[0] + ".t.mp3")
-    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", path, "-vn",
-                    "-c:a", "libmp3lame", "-b:a", "48k", "-ac", "1", out],
-                   check=True, timeout=3600)
-    return out, True
+    try:
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", path, "-vn",
+                        "-c:a", "libmp3lame", "-b:a", "48k", "-ac", "1", out],
+                       check=True, timeout=3600)
+        return out, True
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return path, False
 
 
 def upload_local(s, path, language="Chinese (Traditional)", diarize=False):
@@ -128,7 +71,7 @@ def upload_local(s, path, language="Chinese (Traditional)", diarize=False):
     name = os.path.basename(real)
     size = os.path.getsize(real)
     mime = MIME.get(os.path.splitext(real)[1].lower(), "application/octet-stream")
-    code, out = _lev_call(s, [[3, name, None, mime, size, None]], build_id(s))
+    code, out = lev.call(s, [[3, name, None, mime, size, None]], build_id(s))
     res = (out.get("results") or [{}])[0]
     if not res.get("success?"):
         raise RuntimeError(f"要不到上傳網址（{code}）：{str(out)[:150]}")
