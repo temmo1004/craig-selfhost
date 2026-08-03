@@ -71,18 +71,27 @@ def main():
                 zpath = os.path.join("/tmp", rid + ".zip")
                 xdir = os.path.join("/tmp", rid + "-x")
                 usertracks = []
+                errlog = os.path.join("/tmp", rid + ".cook.err")
                 try:
-                    with open(zpath, "wb") as out:
+                    with open(zpath, "wb") as out, open(errlog, "wb") as err:
                         subprocess.run(["/app/cook.sh", rid, "mp3", "zip"],
-                                       stdout=out, timeout=3600, check=True, env=env)
+                                       stdout=out, stderr=err, timeout=3600, check=True, env=env)
+                    zsz = os.path.getsize(zpath)
                     os.makedirs(xdir, exist_ok=True)
                     with zipfile.ZipFile(zpath) as z:
+                        names = z.namelist()
                         z.extractall(xdir)
+                    print("cook zip ok:", zsz, "bytes,", len(names), "entries:", names[:8], flush=True)
                     usertracks = sorted(
                         os.path.join(r, fn) for r, _, fns in os.walk(xdir) for fn in fns
                         if fn.endswith(".mp3") and os.path.getsize(os.path.join(r, fn)) > 10000)
+                    print("usertracks 過濾後:", [os.path.basename(u) for u in usertracks], flush=True)
                 except Exception as e:
-                    print("per-user cook fail", str(e)[:80], flush=True)
+                    try:
+                        tail = open(errlog).read()[-1500:]
+                    except Exception:
+                        tail = "(無 stderr)"
+                    print("per-user cook fail:", repr(e)[:120], "\n--- cook stderr ---\n", tail, flush=True)
                 if not usertracks:  # per-user 失敗才退混音，確保錄音不遺失
                     mixp = os.path.join("/tmp", rid + ".mix.mp3")
                     try:
