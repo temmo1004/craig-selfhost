@@ -63,64 +63,49 @@ def main():
                     continue
                 if time.time() - ts < 90:
                     continue
-                # 完成：cook 成每人一軌的 zip（container=zip，軌名含使用者名）
+                # 完成：cook 成單檔混音（TurboScribe 會做語者分離，不必 per-track；
+                # 也不撞 Discord 8MB 上限——切成時間段分次上傳）
                 print("cooking", rid, flush=True)
                 env = dict(os.environ)
-                env["PATH"] = "/usr/local/bin:" + env.get("PATH", "")  # 讓 cook.sh 找得到 node
-                zpath = os.path.join("/tmp", rid + ".zip")
-                tracks = []
+                env["PATH"] = "/usr/local/bin:" + env.get("PATH", "")
+                mixp = os.path.join("/tmp", rid + ".mix.mp3")
                 try:
-                    with open(zpath, "wb") as out:
-                        subprocess.run(["/app/cook.sh", rid, "mp3", "zip"],
+                    with open(mixp, "wb") as out:
+                        subprocess.run(["/app/cook.sh", rid, "mp3", "mix"],
                                        stdout=out, timeout=3600, check=True, env=env)
-                    import zipfile
-                    xdir = os.path.join("/tmp", rid + "-x")
-                    os.makedirs(xdir, exist_ok=True)
-                    with zipfile.ZipFile(zpath) as z:
-                        z.extractall(xdir)
-                    tracks = sorted(
-                        os.path.join(r, fn)
-                        for r, _, fns in os.walk(xdir) for fn in fns
-                        if fn.endswith(".mp3") and os.path.getsize(os.path.join(r, fn)) > 10000)
                 except Exception as e:
-                    print("per-track cook fail, 退 mix", str(e)[:80], flush=True)
-                # 每人一軌失敗（node 缺等）→ 退回單檔混音（不需 node），確保錄音不遺失
-                if not tracks:
-                    mixp = os.path.join("/tmp", rid + ".mix.mp3")
-                    try:
-                        with open(mixp, "wb") as out:
-                            subprocess.run(["/app/cook.sh", rid, "mp3", "mix"],
-                                           stdout=out, timeout=3600, check=True, env=env)
-                        if os.path.getsize(mixp) > 10000:
-                            tracks = [mixp]
-                            print("mix 後備成功", rid, flush=True)
-                    except Exception as e:
-                        print("mix cook 也失敗", str(e)[:80], flush=True)
-                if not tracks:
-                    # 兩種都失敗：這次不標記，留著下輪重試（別讓錄音永久丟失）
-                    print("cook 全失敗，保留重試", rid, flush=True)
+                    print("mix cook 失敗", str(e)[:80], flush=True)
+                if not (os.path.exists(mixp) and os.path.getsize(mixp) > 10000):
+                    print("cook 失敗，保留重試", rid, flush=True)
                     fails[rid] = fails.get(rid, 0) + 1
-                    if fails[rid] >= 5:  # 連 5 次都失敗才放棄，免無限迴圈
+                    if fails[rid] >= 5:
                         print("放棄", rid, flush=True); mark(rid)
                     time.sleep(30)
                     continue
+                # 重壓 32kbps 單聲道再切 20 分鐘一段（每段約 4.6MB，穩過 8MB）
+                small = os.path.join("/tmp", rid + ".s.mp3")
+                subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", mixp,
+                                "-ac", "1", "-b:a", "32k", small], check=True, timeout=1800, env=env)
+                segpat = os.path.join("/tmp", rid + "-%03d.mp3")
+                subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", small,
+                                "-f", "segment", "-segment_time", "1200", "-c", "copy", segpat],
+                               check=True, timeout=1800, env=env)
+                tracks = sorted(os.path.join("/tmp", f) for f in os.listdir("/tmp")
+                                if f.startswith(rid + "-") and f.endswith(".mp3"))
+                if not tracks:  # 沒切出段（很短）就傳壓縮後單檔
+                    tracks = [small]
                 if True:
                     if WEBHOOK:
-                        names = "、".join(
-                            os.path.basename(t).rsplit(".", 1)[0].split("-", 1)[-1]
-                            for t in tracks)
                         for i, t in enumerate(tracks):
                             mb = os.path.getsize(t) / 1e6
-                            note = (f"🎙 **會議側錄完成**（id {rid}，{len(tracks)} 軌：{names}）\n"
-                                    f"每檔一位講者，檔名即講者。待處理：轉逐字稿（標講者）→抽決策/行動項→建卡。"
-                                    if i == 0 else
-                                    f"（{rid} 第 {i+1}/{len(tracks)} 軌，{mb:.1f}MB）")
+                            note = (f"🎙 **會議側錄完成**（id {rid}，共 {len(tracks)} 段・單檔混音）\n"
+                                    f"待處理：轉逐字稿（TurboScribe 標講者）→抽決策/行動項→建卡。"
+                                    if i == 0 else f"（{rid} 第 {i+1}/{len(tracks)} 段，{mb:.1f}MB）")
                             upload(t, note)
                         print("uploaded", rid, len(tracks), "tracks", flush=True)
                     mark(rid)
-                import shutil
-                shutil.rmtree(os.path.join("/tmp", rid + "-x"), ignore_errors=True)
-                for f in (zpath, os.path.join("/tmp", rid + ".mix.mp3")):
+                # 清暫存
+                for f in tracks + [mixp, os.path.join("/tmp", rid + ".s.mp3")]:
                     try:
                         os.remove(f)
                     except OSError:
