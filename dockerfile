@@ -18,7 +18,7 @@ RUN apt-get update && \
     # Other dependencies
     sudo git locales python3-pip && \
     # 雲端轉稿：TurboScribe HTTP 客戶端
-    pip3 install --no-cache-dir "curl_cffi>=0.7" && \
+    pip3 install --no-cache-dir "curl_cffi>=0.7" typing_extensions certifi && \
     # Cleanup
     apt-get -y autoremove
 
