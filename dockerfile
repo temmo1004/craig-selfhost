@@ -16,7 +16,9 @@ RUN apt-get update && \
     # install
     dbus-x11 sed coreutils build-essential python-setuptools \
     # Other dependencies
-    sudo git locales && \
+    sudo git locales python3-pip && \
+    # 雲端轉稿：TurboScribe HTTP 客戶端
+    pip3 install --no-cache-dir "curl_cffi>=0.7" && \
     # Cleanup
     apt-get -y autoremove
 
