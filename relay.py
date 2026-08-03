@@ -37,6 +37,7 @@ def upload(path, note):
 
 def main():
     sizes = {}
+    fails = {}
     while True:
         try:
             ids = {fn.split(".")[0] for fn in os.listdir(REC)
@@ -53,23 +54,46 @@ def main():
                     continue
                 # 完成：cook 成每人一軌的 zip（container=zip，軌名含使用者名）
                 print("cooking", rid, flush=True)
+                env = dict(os.environ)
+                env["PATH"] = "/usr/local/bin:" + env.get("PATH", "")  # 讓 cook.sh 找得到 node
                 zpath = os.path.join("/tmp", rid + ".zip")
-                with open(zpath, "wb") as out:
-                    subprocess.run(["/app/cook.sh", rid, "mp3", "zip"],
-                                   stdout=out, timeout=3600, check=True)
-                import zipfile
-                xdir = os.path.join("/tmp", rid + "-x")
-                os.makedirs(xdir, exist_ok=True)
-                with zipfile.ZipFile(zpath) as z:
-                    z.extractall(xdir)
-                tracks = sorted(
-                    os.path.join(r, fn)
-                    for r, _, fns in os.walk(xdir) for fn in fns
-                    if fn.endswith(".mp3") and os.path.getsize(os.path.join(r, fn)) > 10000)
+                tracks = []
+                try:
+                    with open(zpath, "wb") as out:
+                        subprocess.run(["/app/cook.sh", rid, "mp3", "zip"],
+                                       stdout=out, timeout=3600, check=True, env=env)
+                    import zipfile
+                    xdir = os.path.join("/tmp", rid + "-x")
+                    os.makedirs(xdir, exist_ok=True)
+                    with zipfile.ZipFile(zpath) as z:
+                        z.extractall(xdir)
+                    tracks = sorted(
+                        os.path.join(r, fn)
+                        for r, _, fns in os.walk(xdir) for fn in fns
+                        if fn.endswith(".mp3") and os.path.getsize(os.path.join(r, fn)) > 10000)
+                except Exception as e:
+                    print("per-track cook fail, 退 mix", str(e)[:80], flush=True)
+                # 每人一軌失敗（node 缺等）→ 退回單檔混音（不需 node），確保錄音不遺失
                 if not tracks:
-                    print("empty cook, skip", rid, flush=True)
-                    mark(rid)
-                else:
+                    mixp = os.path.join("/tmp", rid + ".mix.mp3")
+                    try:
+                        with open(mixp, "wb") as out:
+                            subprocess.run(["/app/cook.sh", rid, "mp3", "mix"],
+                                           stdout=out, timeout=3600, check=True, env=env)
+                        if os.path.getsize(mixp) > 10000:
+                            tracks = [mixp]
+                            print("mix 後備成功", rid, flush=True)
+                    except Exception as e:
+                        print("mix cook 也失敗", str(e)[:80], flush=True)
+                if not tracks:
+                    # 兩種都失敗：這次不標記，留著下輪重試（別讓錄音永久丟失）
+                    print("cook 全失敗，保留重試", rid, flush=True)
+                    fails[rid] = fails.get(rid, 0) + 1
+                    if fails[rid] >= 5:  # 連 5 次都失敗才放棄，免無限迴圈
+                        print("放棄", rid, flush=True); mark(rid)
+                    time.sleep(30)
+                    continue
+                if True:
                     if WEBHOOK:
                         names = "、".join(
                             os.path.basename(t).rsplit(".", 1)[0].split("-", 1)[-1]
@@ -84,8 +108,12 @@ def main():
                         print("uploaded", rid, len(tracks), "tracks", flush=True)
                     mark(rid)
                 import shutil
-                shutil.rmtree(xdir, ignore_errors=True)
-                os.remove(zpath)
+                shutil.rmtree(os.path.join("/tmp", rid + "-x"), ignore_errors=True)
+                for f in (zpath, os.path.join("/tmp", rid + ".mix.mp3")):
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
         except Exception as e:
             print("relay err", e, flush=True)
         time.sleep(30)

@@ -53,5 +53,10 @@ su postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='craig'\"" | gre
 su postgres -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='craig'\"" | grep -q 1 || \
   su postgres -c "createdb -O craig craig"
 /app/install.sh
+# cook.sh 的 per-track 步驟要用 node（抓講者名字），nvm 裝的 node 不在預設 PATH
+# → 軟連到 /usr/local/bin，否則 cook 會一直 'node: No such file or directory' 失敗
+NODEBIN="$(ls -d /root/.nvm/versions/node/*/bin/node 2>/dev/null | head -1)"
+[ -n "$NODEBIN" ] && ln -sf "$NODEBIN" /usr/local/bin/node && ln -sf "$(dirname "$NODEBIN")/npx" /usr/local/bin/npx 2>/dev/null
+node --version 2>&1 | sed 's/^/node ready: /'
 python3 /app/relay.py &
 sleep infinity
