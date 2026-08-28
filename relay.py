@@ -68,6 +68,23 @@ def transcribe_meeting(rid, tracks, txdir):
         pass
 
 
+_ALARMED = set()
+
+
+def alarm(text, key=None):
+    """壞掉要出聲。成功的路徑一直都有通知，失敗的只 print 到沒人看的 stdout——
+    8/27 那場 4 小時的會就是這樣沒的：cook 逾時、重試五次、mark() 永久跳過，
+    全程只在 log 裡留下兩個字「放棄」。
+
+    key 用來去重：cook 失敗會每分鐘重試，不去重會把頻道洗掉。"""
+    if key:
+        if key in _ALARMED:
+            return
+        _ALARMED.add(key)
+    print("ALARM:", text.replace("\n", " ")[:160], flush=True)
+    _tx_note(text)
+
+
 def _tx_note(text):
     if not WEBHOOK:
         return
@@ -162,6 +179,10 @@ def main():
                     continue
                 # 完成：cook 成每人一軌（Craig 原生 per-user），檔名即講者
                 print("cooking", rid, flush=True)
+                sz_mb = sz / 1048576
+                alarm(f"⏳ 開始處理側錄 `{rid}`（原始檔 {sz_mb:.0f} MB）。"
+                      f"每人一軌，長會議可能要跑一小時以上，完成會再通知。",
+                      key="start:" + rid)
                 env = dict(os.environ)
                 env["PATH"] = "/usr/local/bin:" + env.get("PATH", "")
                 import zipfile, shutil
@@ -199,11 +220,17 @@ def main():
                             usertracks = [mixp]
                     except Exception as e:
                         print("mix 也失敗", str(e)[:80], flush=True)
+                    alarm(f"⚠️ 側錄 `{rid}`：per-user 與 mix 都煮失敗，將重試。\n"
+                          f"`{str(e)[:120]}`", key="mixfail:" + rid)
                 if not usertracks:
                     print("cook 全失敗，保留重試", rid, flush=True)
                     fails[rid] = fails.get(rid, 0) + 1
                     if fails[rid] >= 5:
                         print("放棄", rid, flush=True); mark(rid)
+                        alarm(f"🔴 **側錄處理失敗，已放棄** `{rid}`\n"
+                              f"重試 5 次都煮不出音軌，之後不會再自動處理。\n"
+                              f"**錄音原始檔還在伺服器的 rec/ 裡，沒有刪掉。**\n"
+                              f"要救回來：把服務的 `CRAIG_REDO` 設成 `{rid}` 再重新部署。")
                     time.sleep(30); continue
                 # 每一軌：壓 32k 單聲道，>7.5MB 就再切 20 分段（過 Discord 8MB 上限）
                 uploads = []  # (檔案, 講者名, 段序, 總段)
@@ -250,6 +277,8 @@ def main():
                         print("轉稿執行緒已開", rid, len(fulls), "軌", flush=True)
                     except Exception as e:
                         print("轉稿啟動失敗", str(e)[:80], flush=True)
+                        alarm(f"⚠️ 側錄 `{rid}`：音檔已上傳，但轉逐字稿沒有啟動。\n"
+                              f"`{str(e)[:120]}`", key="txstart:" + rid)
                 shutil.rmtree(xdir, ignore_errors=True)
                 for f in [zpath, os.path.join("/tmp", rid + ".mix.mp3")]:
                     try:
