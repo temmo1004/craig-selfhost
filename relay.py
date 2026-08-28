@@ -38,7 +38,7 @@ def transcribe_meeting(rid, tracks, txdir):
     except Exception as e:
         print("轉稿：session 建立失敗", str(e)[:80], flush=True)
         return
-    parts = []
+    parts, failed = [], []
     for t in sorted(tracks):
         spk = speaker_name(os.path.basename(t))
         try:
@@ -49,10 +49,17 @@ def transcribe_meeting(rid, tracks, txdir):
                 print("轉稿完成", spk, len(txt), "字", flush=True)
             else:
                 print("轉稿逾時/空", spk, flush=True)
+            failed.append(spk)
         except Exception as e:
             print("轉稿單軌失敗", spk, str(e)[:80], flush=True)
+            failed.append(f"{spk}（{str(e)[:60]}）")
     if not parts:
-        _tx_note(f"⚠️ 會議 {rid}：5 軌都沒轉出逐字稿（見 log）。")
+        alarm(f"🔴 **會議 `{rid}` 一軌都沒轉出逐字稿**（共 {len(tracks)} 軌）。\n"
+              f"失敗：{', '.join(failed) or '見 log'}\n音檔已在庫，逐字稿要重轉。")
+    elif failed:
+        alarm(f"⚠️ **會議 `{rid}` 逐字稿不完整**：{len(tracks)} 軌只成功 {len(parts)} 軌。\n"
+              f"**缺**：{', '.join(failed)}\n"
+              f"貼上去的逐字稿少了這幾個人，不要當成完整紀錄。")
     else:
         body = f"📝 **會議逐字稿**（id {rid}，每人一軌，共 {len(parts)} 位講者）\n" \
                f"以下每段開頭是講者名。抽決策/行動項→建卡交給分析。\n\n"
