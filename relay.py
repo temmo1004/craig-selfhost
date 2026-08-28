@@ -172,7 +172,7 @@ def main():
                 try:
                     with open(zpath, "wb") as out, open(errlog, "wb") as err:
                         subprocess.run(["/app/cook.sh", rid, "mp3", "zip"],
-                                       stdout=out, stderr=err, timeout=3600, check=True, env=env)
+                                       stdout=out, stderr=err, timeout=14400, check=True, env=env)
                     zsz = os.path.getsize(zpath)
                     os.makedirs(xdir, exist_ok=True)
                     with zipfile.ZipFile(zpath) as z:
@@ -194,7 +194,7 @@ def main():
                     try:
                         with open(mixp, "wb") as out:
                             subprocess.run(["/app/cook.sh", rid, "mp3", "mix"],
-                                           stdout=out, timeout=3600, check=True, env=env)
+                                           stdout=out, timeout=14400, check=True, env=env)
                         if os.path.getsize(mixp) > 10000:
                             usertracks = [mixp]
                     except Exception as e:
@@ -211,14 +211,14 @@ def main():
                     spk = os.path.basename(ut).rsplit(".", 1)[0].split("-", 1)[-1] or "混音"
                     comp = ut + ".c.mp3"
                     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", ut,
-                                    "-ac", "1", "-b:a", "32k", comp], check=True, timeout=1800, env=env)
+                                    "-ac", "1", "-b:a", "32k", comp], check=True, timeout=5400, env=env)
                     if os.path.getsize(comp) <= 7_500_000:
                         uploads.append((comp, spk, 1, 1))
                     else:
                         segpat = ut + "-%03d.mp3"
                         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", comp,
                                         "-f", "segment", "-segment_time", "1200", "-c", "copy", segpat],
-                                       check=True, timeout=1800, env=env)
+                                       check=True, timeout=5400, env=env)
                         segs = sorted(f for f in os.listdir(os.path.dirname(ut))
                                       if f.startswith(os.path.basename(ut) + "-") and f.endswith(".mp3"))
                         for j, sf in enumerate(segs):
