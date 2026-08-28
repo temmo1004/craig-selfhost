@@ -265,6 +265,11 @@ def main():
                                 f"待處理：轉逐字稿→抽決策/行動項→建卡。\n**講者：{spk}**{seglbl} {mb:.1f}MB"
                                 if i == 0 else f"**{spk}**{seglbl} {mb:.1f}MB")
                         upload(f, note)
+                    # 哨兵：轉稿 worker 每 60 秒掃一次，掃到的瞬間如果檔還在陸續上傳，
+                    # 它會拿到不完整的一批就開工並把整場標記處理完 —— 8/27 那場 44 個檔
+                    # 只轉到第 1 個就是這樣。發完最後一個檔才給這則，worker 看到才動。
+                    _tx_note(f"✅ **側錄上傳完畢**（id {rid}，共 {len(uploads)} 檔、"
+                             f"{len(usertracks)} 軌）")
                     print("uploaded", rid, len(uploads), "檔", flush=True)
                 mark(rid)
                 # 轉稿改由 basidemac 常駐 worker 做（住宅 IP 過 Cloudflare）；
