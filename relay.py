@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """肆方搬運器：偵測 /app/rec 完成的錄音 → cook.sh 轉 mp3 → 上傳 Discord #會議入庫。
 判定完成：.ogg.data 檔 90 秒沒再長大。處理過的記在 /app/rec/.relayed。"""
-import json, os, re, subprocess, time, urllib.request
+import json, os, re, subprocess, threading, time, urllib.request
 
 REC = "/app/rec"
 WEBHOOK = os.environ.get("INBOX_WEBHOOK_URL", "")
@@ -129,9 +129,13 @@ def done_set():
         return set()
 
 
+_MARK_LOCK = threading.Lock()
+
+
 def mark(rid):
-    with open(DONE_F, "a") as f:
-        f.write(rid + "\n")
+    with _MARK_LOCK:                 # 併發 cook 會同時寫 .relayed
+        with open(DONE_F, "a") as f:
+            f.write(rid + "\n")
 
 
 def upload(path, note):
@@ -168,6 +172,12 @@ def main():
         print("TS 探針:", "PASS 雲端可轉稿 ✅" if ok else "FAIL 被 Cloudflare 擋或 cookie 過期 ❌", flush=True)
     except Exception as _e:
         print("TS 探針 例外:", str(_e)[:100], flush=True)
+    # 併發數由實際核心數決定。cook 是 ffmpeg，CPU-bound：
+    # 單核平行只會讓每一場都變慢、總時間不變，還多耗記憶體與 /tmp 空間。
+    # 上限 2：一場 4 小時的錄音會在 /tmp 產生 200MB+ 的 zip 與解開的軌，開太多會塞爆。
+    _cpu = os.cpu_count() or 1
+    COOK_PAR = 2 if _cpu >= 2 else 1
+    print(f"cook 併發：{COOK_PAR}（偵測到 {_cpu} 核）", flush=True)
     sizes = {}
     fails = {}
     while True:
