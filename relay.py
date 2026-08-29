@@ -174,9 +174,10 @@ def main():
         print("TS 探針 例外:", str(_e)[:100], flush=True)
     # 併發數由實際核心數決定。cook 是 ffmpeg，CPU-bound：
     # 單核平行只會讓每一場都變慢、總時間不變，還多耗記憶體與 /tmp 空間。
-    # 上限 2：一場 4 小時的錄音會在 /tmp 產生 200MB+ 的 zip 與解開的軌，開太多會塞爆。
+    # 除以 3 而不是跑滿：cook.sh 內部已經分軌併發，外層再開滿只會互搶 CPU；
+    # 而且一場 4 小時的錄音在 /tmp 會產生 200MB+ 的 zip 與解開的軌，開太多會塞爆磁碟。
     _cpu = os.cpu_count() or 1
-    COOK_PAR = 2 if _cpu >= 2 else 1
+    COOK_PAR = max(2, _cpu // 3)
     print(f"cook 併發：{COOK_PAR}（偵測到 {_cpu} 核）", flush=True)
     sizes = {}
     fails = {}
