@@ -217,6 +217,7 @@ def main():
                 xdir = os.path.join("/tmp", rid + "-x")
                 usertracks = []
                 errlog = os.path.join("/tmp", rid + ".cook.err")
+                cook_err = mix_err = None
                 try:
                     with open(zpath, "wb") as out, open(errlog, "wb") as err:
                         subprocess.run(["/app/cook.sh", rid, "mp3", "zip"],
@@ -232,6 +233,7 @@ def main():
                         if fn.endswith(".mp3") and os.path.getsize(os.path.join(r, fn)) > 10000)
                     print("usertracks 過濾後:", [os.path.basename(u) for u in usertracks], flush=True)
                 except Exception as e:
+                    cook_err = e
                     try:
                         tail = open(errlog).read()[-1500:]
                     except Exception:
@@ -246,10 +248,25 @@ def main():
                         if os.path.getsize(mixp) > 10000:
                             usertracks = [mixp]
                     except Exception as e:
+                        mix_err = e
                         print("mix 也失敗", str(e)[:80], flush=True)
-                    alarm(f"⚠️ 側錄 `{rid}`：per-user 與 mix 都煮失敗，將重試。\n"
-                          f"`{str(e)[:120]}`", key="mixfail:" + rid)
+                    # 只有真的煮壞了才叫。這行以前在 try 之外卻引用 `e`：cook 成功時
+                    # `e` 沒有繫結 → NameError → 被外層 except 吞掉 → 下面的 fails
+                    # 計數永遠加不到，於是空錄音每 30 秒重煮一次、沒有盡頭
+                    # （2026-08-29 實測：同一場煮了 22 次，log 裡 23 個
+                    #  "relay err local variable 'e' referenced before assignment"）。
+                    if not usertracks and (cook_err or mix_err):
+                        alarm(f"⚠️ 側錄 `{rid}`：per-user 與 mix 都煮失敗，將重試。\n"
+                              f"`{str(mix_err or cook_err)[:120]}`", key="mixfail:" + rid)
                 if not usertracks:
+                    # 兩件事要分開：cook 真的壞了（值得重試），或這場**根本沒有聲音**。
+                    # 後者重試一萬次結果都一樣，直接記完成，否則就是上面那個無限迴圈。
+                    # 不在這裡告警：空錄音由對帳器統計（它本來就在數「空錄音」），
+                    # 在這裡叫會把「有人誤觸語音頻道」變成紅色故障。
+                    if not cook_err and not mix_err:
+                        print("空錄音（cook 正常但沒有可用音軌），標記完成", rid, flush=True)
+                        mark(rid)
+                        continue
                     print("cook 全失敗，保留重試", rid, flush=True)
                     fails[rid] = fails.get(rid, 0) + 1
                     if fails[rid] >= 5:
