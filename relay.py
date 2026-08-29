@@ -165,13 +165,22 @@ def main():
             print("CRAIG_REDO 解除標記，將重跑:", redo, flush=True)
         except Exception as e:
             print("redo unmark fail", e, flush=True)
-    # 開機探針：雲端 IP 過不過 TurboScribe 的 Cloudflare（轉稿能不能在雲上跑的關鍵）
-    try:
-        import ts_cloud as _ts
-        ok = _ts.probe(_ts.sess())
-        print("TS 探針:", "PASS 雲端可轉稿 ✅" if ok else "FAIL 被 Cloudflare 擋或 cookie 過期 ❌", flush=True)
-    except Exception as _e:
-        print("TS 探針 例外:", str(_e)[:100], flush=True)
+    # TurboScribe 這條路 2026-08-18 就退役了（逐字稿走 basidemac 的 meeting_tx →
+    # CLIProxyAPI → Gemini），閘門 CRAIG_CLOUD_TX 預設不開。閘門關著就不要探針：
+    # 它會印「PASS 雲端可轉稿 ✅」，但 probe() 拿的是 Next.js 的 build id，
+    # 只證明 Cloudflare 沒擋，**完全沒有驗 cookie 還有沒有效**（那把 cookie 是 8/03 的）。
+    # 一張永遠會亮的綠燈比沒有燈更糟——它讓人以為還有備援。
+    if os.environ.get("CRAIG_CLOUD_TX") == "1":
+        try:
+            import ts_cloud as _ts
+            ok = _ts.probe(_ts.sess())
+            print("TS 探針:", "PASS 過得了 Cloudflare（未驗 cookie）"
+                  if ok else "FAIL 被 Cloudflare 擋 ❌", flush=True)
+        except Exception as _e:
+            print("TS 探針 例外:", str(_e)[:100], flush=True)
+    else:
+        print("雲端轉稿：關（CRAIG_CLOUD_TX 未設）。逐字稿由 basidemac 的 meeting_tx 負責",
+              flush=True)
     # 併發數由實際核心數決定。cook 是 ffmpeg，CPU-bound：
     # 單核平行只會讓每一場都變慢、總時間不變，還多耗記憶體與 /tmp 空間。
     # 除以 3 而不是跑滿：cook.sh 內部已經分軌併發，外層再開滿只會互搶 CPU；
