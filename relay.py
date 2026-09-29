@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """肆方搬運器：偵測 /app/rec 完成的錄音 → cook.sh 轉 mp3 → 上傳 Discord #會議入庫。
 判定完成：.ogg.data 檔 90 秒沒再長大。處理過的記在 /app/rec/.relayed。"""
-import json, os, re, subprocess, threading, time, urllib.request
+import json, os, re, subprocess, threading, time, urllib.error, urllib.request
 
 REC = "/app/rec"
 WEBHOOK = os.environ.get("INBOX_WEBHOOK_URL", "")
@@ -147,10 +147,23 @@ def upload(path, note):
             f"--{bnd}\r\nContent-Disposition: form-data; name=\"files[0]\"; "
             f"filename=\"{os.path.basename(path)}\"\r\nContent-Type: audio/mpeg\r\n\r\n"
             ).encode() + blob + f"\r\n--{bnd}--\r\n".encode()
-    urllib.request.urlopen(urllib.request.Request(
-        WEBHOOK, body,
-        {"Content-Type": f"multipart/form-data; boundary={bnd}",
-         "User-Agent": "DiscordBot (sifang-relay,1)"}), timeout=300)
+    # 2026-09-29：單檔傳失敗（9/28 是 SSL EOF）以前會讓整場 raise → 沒 mark →
+    # 下一輪整場重煮重傳，Discord 上留下半批重複的 header。改成單檔重試。
+    for attempt in range(4):
+        try:
+            urllib.request.urlopen(urllib.request.Request(
+                WEBHOOK, body,
+                {"Content-Type": f"multipart/form-data; boundary={bnd}",
+                 "User-Agent": "DiscordBot (sifang-relay,1)"}), timeout=300)
+            return
+        except urllib.error.HTTPError as e:
+            if (e.code < 500 and e.code != 429) or attempt == 3:
+                raise
+        except Exception:
+            if attempt == 3:
+                raise
+        print("upload 重試", os.path.basename(path), attempt + 1, flush=True)
+        time.sleep(10 * (attempt + 1))
 
 
 def main():
@@ -223,14 +236,18 @@ def main():
                         subprocess.run(["/app/cook.sh", rid, "mp3", "zip"],
                                        stdout=out, stderr=err, timeout=14400, check=True, env=env)
                     zsz = os.path.getsize(zpath)
+                    # 先清掉上一輪的殘留：xdir 裡會有上次壓出的 .c.mp3 與分段檔，
+                    # 不清的話重試時全被當成新音軌（9/28 那場 4 軌 → 17 → 87）。
+                    shutil.rmtree(xdir, ignore_errors=True)
                     os.makedirs(xdir, exist_ok=True)
                     with zipfile.ZipFile(zpath) as z:
                         names = z.namelist()
                         z.extractall(xdir)
                     print("cook zip ok:", zsz, "bytes,", len(names), "entries:", names[:8], flush=True)
+                    # 只認 zip 裡原本就有的檔，不用 os.walk 撈整個資料夾（自己的產出不能變成輸入）
                     usertracks = sorted(
-                        os.path.join(r, fn) for r, _, fns in os.walk(xdir) for fn in fns
-                        if fn.endswith(".mp3") and os.path.getsize(os.path.join(r, fn)) > 10000)
+                        os.path.join(xdir, n) for n in names
+                        if n.endswith(".mp3") and os.path.getsize(os.path.join(xdir, n)) > 10000)
                     print("usertracks 過濾後:", [os.path.basename(u) for u in usertracks], flush=True)
                 except Exception as e:
                     cook_err = e
@@ -309,6 +326,11 @@ def main():
                              f"{len(usertracks)} 軌）")
                     print("uploaded", rid, len(uploads), "檔", flush=True)
                 mark(rid)
+                shutil.rmtree(xdir, ignore_errors=True)   # 傳完就清，/tmp 不累積
+                try:
+                    os.remove(zpath)
+                except OSError:
+                    pass
                 # 轉稿改由 basidemac 常駐 worker 做（住宅 IP 過 Cloudflare）；
                 # 雲端機房 IP 被 Cloudflare 擋，預設不在此轉稿。要開才設 CRAIG_CLOUD_TX=1
                 if os.environ.get("CRAIG_CLOUD_TX") == "1":
