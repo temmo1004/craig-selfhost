@@ -46,7 +46,9 @@ if [ -n "$PGVER" ] && [ ! -f "/var/lib/postgresql/$PGVER/main/PG_VERSION" ]; the
   pg_createcluster "$PGVER" main
 fi
 /etc/init.d/postgresql start || true
-service redis-server start || redis-server --daemonize yes || true
+# 不用 service redis-server start：redis.conf 是 daemonize no，init script 的 start-stop-daemon
+# 會在前景跑 redis 永不返回，後面 install.sh／relay.py 全不跑（9/19、9/21、9/28 三次）
+redis-cli ping 2>/dev/null | grep -q PONG || redis-server /etc/redis/redis.conf --daemonize yes || true
 for i in $(seq 1 30); do pg_isready -q && break; sleep 1; done
 su postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='craig'\"" | grep -q 1 || \
   su postgres -c "psql -c \"CREATE USER craig WITH PASSWORD 'craig' CREATEDB;\""
